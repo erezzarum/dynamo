@@ -44,9 +44,20 @@ RUN mkdir -p /tmp/efa && \
     ./efa_installer.sh -y --skip-kmod --skip-limit-conf --no-verify && \
     rm -rf /tmp/efa && \
     rm -rf /opt/amazon/aws-ofi-nccl && \
+    echo "/opt/amazon/openmpi/lib" > /etc/ld.so.conf.d/000_efa_ompi.conf && \
+    echo "hwloc_base_binding_policy = none" >> /opt/amazon/openmpi/etc/openmpi-mca-params.conf && \
+    echo "rmaps_base_mapping_policy = slot" >> /opt/amazon/openmpi/etc/openmpi-mca-params.conf && \
     ldconfig
 
-ENV EFA_VERSION="${EFA_VERSION}"
+ENV EFA_VERSION="${EFA_VERSION}" \
+    PMIX_MCA_gds=hash \
+    OMPI_MCA_pml=^ucx \
+    OMPI_MCA_btl=tcp,self \
+    OMPI_MCA_btl_tcp_if_exclude=lo,docker0,veth_def_agent \
+    OPAL_PREFIX=/opt/amazon/openmpi \
+    NCCL_SOCKET_IFNAME=^docker,lo,veth \
+    LD_LIBRARY_PATH=/opt/amazon/openmpi/lib:$LD_LIBRARY_PATH \
+    PATH=/opt/amazon/openmpi/bin:/opt/amazon/efa/bin:$PATH
 
 USER dynamo
 
@@ -82,9 +93,20 @@ RUN mkdir -p /tmp/efa && \
     ./efa_installer.sh -y --skip-kmod --skip-limit-conf --no-verify && \
     rm -rf /tmp/efa && \
     rm -rf /opt/amazon/aws-ofi-nccl && \
+    echo "/opt/amazon/openmpi/lib" > /etc/ld.so.conf.d/000_efa_ompi.conf && \
+    echo "hwloc_base_binding_policy = none" >> /opt/amazon/openmpi/etc/openmpi-mca-params.conf && \
+    echo "rmaps_base_mapping_policy = slot" >> /opt/amazon/openmpi/etc/openmpi-mca-params.conf && \
     ldconfig
 
-ENV EFA_VERSION="${EFA_VERSION}"
+ENV EFA_VERSION="${EFA_VERSION}" \
+    PMIX_MCA_gds=hash \
+    OMPI_MCA_pml=^ucx \
+    OMPI_MCA_btl=tcp,self \
+    OMPI_MCA_btl_tcp_if_exclude=lo,docker0,veth_def_agent \
+    OPAL_PREFIX=/opt/amazon/openmpi \
+    NCCL_SOCKET_IFNAME=^docker,lo,veth \
+    LD_LIBRARY_PATH=/opt/amazon/openmpi/lib:$LD_LIBRARY_PATH \
+    PATH=/opt/amazon/openmpi/bin:/opt/amazon/efa/bin:$PATH
 
 ENTRYPOINT ["/opt/nvidia/nvidia_entrypoint.sh"]
 CMD []
