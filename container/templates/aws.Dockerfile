@@ -41,9 +41,23 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 ENV EFA_VERSION="${EFA_VERSION}"
 
+ARG NIXL_LIBFABRIC_REF
+
+# Copy custom libfabric and register it with the dynamic linker ONLY if the
+# EFA-bundled libfabric is older than NIXL_LIBFABRIC_REF.
+RUN --mount=from=wheel_builder,source=/usr/local/libfabric,target=/tmp/libfabric_build \
+    EFA_PC=$(find /opt/amazon/efa -path '*/pkgconfig/libfabric.pc' 2>/dev/null | head -n1) && \
+    EFA_LIBFABRIC_RAW=$(cat "$EFA_PC" 2>/dev/null | grep '^Version:' | awk '{print $2}') && \
+    EFA_LIBFABRIC_VER=$(echo "$EFA_LIBFABRIC_RAW" | grep -oE '^[0-9]+\.[0-9]+(\.[0-9]+)?') && \
+    REF_VER=$(echo "${NIXL_LIBFABRIC_REF}" | sed 's/^v//') && \
+    if [ -n "$EFA_LIBFABRIC_VER" ] && [ -n "$REF_VER" ] && \
+       [ "$(printf '%s\n' "$EFA_LIBFABRIC_VER" "$REF_VER" | sort -V | head -n1)" = "$EFA_LIBFABRIC_VER" ] && \
+       [ "$EFA_LIBFABRIC_VER" != "$REF_VER" ]; then \
+        cp -a /tmp/libfabric_build /usr/local/libfabric && \
+        echo "/usr/local/libfabric/lib" > /etc/ld.so.conf.d/000_efa.conf && \
+        ldconfig; \
+    fi
+
 {% if target == "runtime" %}
 USER dynamo
 {% endif %}
-
-ENTRYPOINT ["/opt/nvidia/nvidia_entrypoint.sh"]
-CMD []
