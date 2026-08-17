@@ -146,9 +146,16 @@ matrix:
 A template selection names a source directory relative to the matrix and an
 output `path` relative to the generated overlay. The output path must be under
 `components/`; `path: components/efa` produces a normal local Component at
-`kustomize/overlays/<name>/components/efa/`. A template directory contains
-`kustomization.yaml.j2` and may contain a plain `values.yaml` mapping. The
-Jinja source must render one Kustomize `Component`.
+`kustomize/overlays/<name>/components/efa/`. A standalone template directory
+contains `kustomization.yaml.j2` and may contain a plain `values.yaml` mapping.
+To compose a reusable base with an instance-specific layer, place the base
+`kustomization.yaml.j2` in the selected directory's parent and optionally add
+another `kustomization.yaml.j2` in the selected directory. `unfold` renders the
+parent as `components/efa/base/`, the optional local template as
+`components/efa/instance/`, and a wrapper Component that applies `base` before
+`instance`. Base `values.yaml` defaults are overridden by selected-directory
+values before matrix `values:` overrides apply. The Jinja source must render one
+Kustomize `Component`.
 It receives `values` and an indexed `base` rendered from the matrix `source`.
 `base` is indexed by lower-case Kind and `metadata.name`, for example
 `base.configmap[values.PREFILL_CONFIG]`. When exactly one resource of a Kind is

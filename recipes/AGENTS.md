@@ -20,9 +20,12 @@ SPDX-License-Identifier: Apache-2.0
   `components` list. The matrix, recipe-local base and Components, and shared
   Components are source. A dimension value may also select `templates` and set
   `values`. Each template selection has a source relative to the matrix and a
-  generated `path` under the overlay's `components/` directory. Shared template
-  sources live in `recipes/kustomize/templates/`; a template directory has
-  `kustomization.yaml.j2` and optional `values.yaml`.
+  generated `path` under the overlay's `components/` directory. A standalone
+  template directory contains `kustomization.yaml.j2` and optional `values.yaml`.
+  To share a base Component across instance types, place
+  `kustomization.yaml.j2` in the selected directory's parent. `unfold` renders
+  that parent template as `base/` and, when the selected directory also contains
+  `kustomization.yaml.j2`, renders it as a later `instance/` Component layer.
   `unfold` evaluates the template with strict sandboxed Jinja, the variant values,
   and the fully rendered base indexed as `base.<lowercase-kind>[metadata.name]`.
   Use `base.<lowercase-kind> | only` only when exactly one such resource is

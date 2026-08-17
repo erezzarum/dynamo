@@ -617,3 +617,241 @@ def test_help():
 
     assert result.returncode == 0
     assert "{unfold,render,check,compose}" in result.stdout
+
+
+def test_unfold_composes_parent_base_and_instance_template_layers(
+    tmp_path, monkeypatch
+):
+    recipe = tmp_path / "recipe"
+    base = recipe / "kustomize/base"
+    write_kustomization(base, "resources:\n  - config-map.yaml\n")
+    (base / "config-map.yaml").write_text(
+        "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app\n",
+        encoding="utf-8",
+    )
+
+    external_component = recipe / "components/aws-efa"
+    write_kustomization(
+        external_component,
+        "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\n",
+    )
+    template_root = recipe / "templates/aws-efa"
+    write_template(
+        template_root,
+        "apiVersion: kustomize.config.k8s.io/v1alpha1\n"
+        "kind: Component\n"
+        "components:\n"
+        "  - ../../components/aws-efa\n"
+        "patches:\n"
+        "  - patch: |\n"
+        "      apiVersion: v1\n"
+        "      kind: ConfigMap\n"
+        "      metadata:\n"
+        "        name: app\n"
+        "      data:\n"
+        "        layer: {{ values.LAYER }}\n",
+        "LAYER: base\n",
+    )
+    (template_root / "base.txt.j2").write_text(
+        "layer={{ values.LAYER }}\n", encoding="utf-8"
+    )
+
+    instance = template_root / "p5.48xlarge"
+    write_template(
+        instance,
+        "apiVersion: kustomize.config.k8s.io/v1alpha1\n"
+        "kind: Component\n"
+        "patches:\n"
+        "  - patch: |\n"
+        "      apiVersion: v1\n"
+        "      kind: ConfigMap\n"
+        "      metadata:\n"
+        "        name: app\n"
+        "      data:\n"
+        "        instance: {{ values.LAYER }}\n",
+        "LAYER: p5\n",
+    )
+    (instance / "instance.txt.j2").write_text(
+        "layer={{ values.LAYER }}\n", encoding="utf-8"
+    )
+    matrix = recipe / ".kustomize-matrix.yaml"
+    matrix.write_text(
+        "source: kustomize/base\n"
+        'nameTemplate: "${variant}"\n'
+        "matrix:\n"
+        "  variant:\n"
+        "    - name: aws-p5.48xlarge\n"
+        "      templates:\n"
+        "        - source: templates/aws-efa/p5.48xlarge\n"
+        "          path: components/efa\n",
+        encoding="utf-8",
+    )
+
+    kustomize_matrix = load_matrix_module()
+    mock_kustomize_base_build(
+        kustomize_matrix,
+        monkeypatch,
+        base,
+        (base / "config-map.yaml").read_text(encoding="utf-8"),
+    )
+    config = kustomize_matrix.load_matrix(str(matrix))
+
+    kustomize_matrix.unfold_matrix(config, check=False)
+    component_dir = recipe / "kustomize/overlays/aws-p5.48xlarge/components/efa"
+    wrapper = yaml.safe_load((component_dir / "kustomization.yaml").read_text())
+    base_component = yaml.safe_load(
+        (component_dir / "base/kustomization.yaml").read_text()
+    )
+    instance_component = yaml.safe_load(
+        (component_dir / "instance/kustomization.yaml").read_text()
+    )
+
+    assert wrapper["components"] == ["base", "instance"]
+    assert base_component["components"] == [
+        kustomize_matrix.relative_path(external_component, component_dir / "base")
+    ]
+    assert "layer: p5" in base_component["patches"][0]["patch"]
+    assert "instance: p5" in instance_component["patches"][0]["patch"]
+    assert (component_dir / "base/base.txt").read_text(encoding="utf-8") == "layer=p5\n"
+    assert (component_dir / "instance/instance.txt").read_text(
+        encoding="utf-8"
+    ) == "layer=p5\n"
+    assert kustomize_matrix.unfold_matrix(config, check=True) == []
+
+
+def test_parent_template_requires_an_existing_instance_directory(tmp_path):
+    kustomize_matrix = load_matrix_module()
+    template_root = tmp_path / "templates/aws-efa"
+    write_template(
+        template_root,
+        "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\n",
+    )
+
+    with pytest.raises(ValueError, match="template source is not a directory"):
+        kustomize_matrix.resolve_template_selections(
+            [
+                {
+                    "source": "templates/aws-efa/missing-instance",
+                    "path": "components/efa",
+                }
+            ],
+            tmp_path / ".kustomize-matrix.yaml",
+            "templates",
+        )
+
+
+def test_unfold_removes_composed_template_layers_when_selection_is_removed(
+    tmp_path, monkeypatch
+):
+    recipe = tmp_path / "recipe"
+    base = recipe / "kustomize/base"
+    write_kustomization(base, "resources:\n  - config-map.yaml\n")
+    (base / "config-map.yaml").write_text(
+        "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app\n",
+        encoding="utf-8",
+    )
+    template_root = recipe / "templates/aws-efa"
+    write_template(
+        template_root,
+        "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\n",
+    )
+    instance = template_root / "p5.48xlarge"
+    write_template(
+        instance,
+        "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\n",
+    )
+    matrix = recipe / ".kustomize-matrix.yaml"
+    matrix.write_text(
+        "source: kustomize/base\n"
+        'nameTemplate: "${variant}"\n'
+        "matrix:\n"
+        "  variant:\n"
+        "    - name: aws-p5.48xlarge\n"
+        "      templates:\n"
+        "        - source: templates/aws-efa/p5.48xlarge\n"
+        "          path: components/efa\n",
+        encoding="utf-8",
+    )
+
+    kustomize_matrix = load_matrix_module()
+    mock_kustomize_base_build(
+        kustomize_matrix,
+        monkeypatch,
+        base,
+        (base / "config-map.yaml").read_text(encoding="utf-8"),
+    )
+    config = kustomize_matrix.load_matrix(str(matrix))
+    kustomize_matrix.unfold_matrix(config, check=False)
+
+    matrix.write_text(
+        "source: kustomize/base\n"
+        'nameTemplate: "${variant}"\n'
+        "matrix:\n"
+        "  variant:\n"
+        "    - name: aws-p5.48xlarge\n",
+        encoding="utf-8",
+    )
+    config = kustomize_matrix.load_matrix(str(matrix))
+    assert kustomize_matrix.unfold_matrix(config, check=False)
+    assert not (recipe / "kustomize/overlays/aws-p5.48xlarge/components/efa").exists()
+
+
+def test_unfold_composes_base_without_instance_template(tmp_path, monkeypatch):
+    recipe = tmp_path / "recipe"
+    base = recipe / "kustomize/base"
+    write_kustomization(base, "resources:\n  - config-map.yaml\n")
+    (base / "config-map.yaml").write_text(
+        "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app\n",
+        encoding="utf-8",
+    )
+    template_root = recipe / "templates/aws-efa"
+    write_template(
+        template_root,
+        "apiVersion: kustomize.config.k8s.io/v1alpha1\n"
+        "kind: Component\n"
+        "patches:\n"
+        "  - patch: |\n"
+        "      apiVersion: v1\n"
+        "      kind: ConfigMap\n"
+        "      metadata:\n"
+        "        name: app\n"
+        "      data:\n"
+        "        layer: {{ values.LAYER }}\n",
+        "LAYER: base\n",
+    )
+    instance = template_root / "p5.48xlarge"
+    instance.mkdir()
+    (instance / "values.yaml").write_text("LAYER: p5\n", encoding="utf-8")
+    matrix = recipe / ".kustomize-matrix.yaml"
+    matrix.write_text(
+        "source: kustomize/base\n"
+        'nameTemplate: "${variant}"\n'
+        "matrix:\n"
+        "  variant:\n"
+        "    - name: aws-p5.48xlarge\n"
+        "      templates:\n"
+        "        - source: templates/aws-efa/p5.48xlarge\n"
+        "          path: components/efa\n",
+        encoding="utf-8",
+    )
+
+    kustomize_matrix = load_matrix_module()
+    mock_kustomize_base_build(
+        kustomize_matrix,
+        monkeypatch,
+        base,
+        (base / "config-map.yaml").read_text(encoding="utf-8"),
+    )
+    config = kustomize_matrix.load_matrix(str(matrix))
+
+    kustomize_matrix.unfold_matrix(config, check=False)
+    component_dir = recipe / "kustomize/overlays/aws-p5.48xlarge/components/efa"
+    wrapper = yaml.safe_load((component_dir / "kustomization.yaml").read_text())
+    base_component = yaml.safe_load(
+        (component_dir / "base/kustomization.yaml").read_text()
+    )
+
+    assert wrapper["components"] == ["base"]
+    assert not (component_dir / "instance").exists()
+    assert "layer: p5" in base_component["patches"][0]["patch"]
+    assert kustomize_matrix.unfold_matrix(config, check=True) == []
